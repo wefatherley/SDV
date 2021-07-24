@@ -72,6 +72,13 @@ class Metadata:
             The path to which the paths found inside the metadata are relative.
             If not given, it defaults to the folder where the metadata is located, or
             to None, if no metadata is given.
+        **connect_params:
+            Either a single key-value pair, ``url="url_string"`` where
+            ``url_string`` is an RFC-1738 compliant URL specifing RDBMS connection 
+            params, e.g. ``dialect+driver://username:password@host:port/database``,
+            or multiple key-value pairs of connection parameters. These parameters
+            are used to establish a connection pool to some RDBMS instance to enable
+            the reflection member.
     """
 
     _child_map = None
@@ -171,21 +178,27 @@ class Metadata:
 
         return new_metadata
 
-    def __init__(self, metadata=None, root_path=None):
-        if isinstance(metadata, str):
-            self.root_path = root_path or os.path.dirname(metadata)
-            with open(metadata) as metadata_file:
-                metadata = json.load(metadata_file)
+    def __init__(self, metadata=None, root_path=None, **connect_params):
+        if any(connect_params):
+            if "url" in connect_params: 
+                self.engine = create_engine(connect_params["url"])
+            else:
+                self.engine = create_engine(**connect_params)
         else:
-            self.root_path = root_path or '.'
+            if isinstance(metadata, str):
+                self.root_path = root_path or os.path.dirname(metadata)
+                with open(metadata) as metadata_file:
+                    metadata = json.load(metadata_file)
+            else:
+                self.root_path = root_path or '.'
 
-        if metadata is not None:
-            self._metadata = self._dict_metadata(metadata)
-        else:
-            self._metadata = {'tables': {}}
+            if metadata is not None:
+                self._metadata = self._dict_metadata(metadata)
+            else:
+                self._metadata = {'tables': {}}
 
-        self._hyper_transformers = dict()
-        self._analyze_relationships()
+            self._hyper_transformers = dict()
+            self._analyze_relationships()
 
     def get_children(self, table_name):
         """Get tables for which the given table is parent.
@@ -1017,29 +1030,11 @@ class Metadata:
                 Whether to add names to the diagram or not. Defaults to ``True``
         """
         return visualization.visualize(self, path, names=names, details=details)
-
-
-class ReflectedMetadata(Metadata):
-    """Dataset Metadata as reflected from an RDBMS instance.
-
-    A :class:`Metadata` subclass with RDBMS client functionality that tries its best
-    to build metadata structure from the dataset information schema.
-
-    Args:
-        **connect_params (str):
-            Either a single key-value pair, ``url="url_string"`` where
-            ``url_string`` is an RFC-1738 compliant URL specifing RDBMS connection 
-            params, e.g. ``dialect+driver://username:password@host:port/database``,
-            or multiple key-value pairs of connection parameters.
-    """
-
-    def __init__(self, schema, **connect_params):
-        """construct self"""
-        super().__init__()
-        if "url" in connect_params: 
-            self.engine = create_engine(connect_params["url"])
-        else:
-             self.engine = create_engine(**connect_params)
+        
+    def reflect(self, schema):
+        """Build metadata and corresponding dataset via reflection.
+        
+        """
         inspector = sqla_inspect(self.engine)
         if schema not in inspector.get_schema_names():
             raise MetadataError("unable to locate metadata")
@@ -1049,7 +1044,7 @@ class ReflectedMetadata(Metadata):
                 # fetch python-typed records
                 table_data = connection.execute(
                     text(
-                        "SELECT * FROM %(id)s ORDER BY RAND() LIMIT 10000",
+                        "SELECT * FROM %(table)s ORDER BY RAND() LIMIT 2000",
                         (table,)
                     )
                 ).mappings()
