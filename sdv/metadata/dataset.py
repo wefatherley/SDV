@@ -9,6 +9,8 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from rdt import HyperTransformer, transformers
+from sqlalchemy import create_engine, inspect as sqla_inspect, text
+from sqlalchemy.inspection import inspect
 
 from sdv.metadata import visualization
 from sdv.metadata.errors import MetadataError
@@ -1015,3 +1017,54 @@ class Metadata:
                 Whether to add names to the diagram or not. Defaults to ``True``
         """
         return visualization.visualize(self, path, names=names, details=details)
+
+
+class ReflectedMetadata(Metadata):
+    """Dataset Metadata as reflected from an RDBMS instance.
+
+    A :class:`Metadata` subclass with RDBMS client functionality that tries its best
+    to build metadata structure from the dataset information schema.
+
+    Args:
+        **connect_params (str):
+            Either a single key-value pair, ``url="url_string"`` where
+            ``url_string`` is an RFC-1738 compliant URL specifing RDBMS connection 
+            params, e.g. ``dialect+driver://username:password@host:port/database``,
+            or multiple key-value pairs of connection parameters.
+    """
+
+    def __init__(self, schema, **connect_params):
+        """construct self"""
+        super().__init__()
+        if "url" in connect_params: 
+            self.engine = create_engine(connect_params["url"])
+        else:
+             self.engine = create_engine(**connect_params)
+        inspector = sqla_inspect(self.engine)
+        if schema not in inspector.get_schema_names():
+            raise MetadataError("unable to locate metadata")
+        with self.engine.connect() as connection:
+            for table, _ in inspector.get_sorted_table_and_fkc_names():
+                #
+                # fetch python-typed records
+                table_data = connection.execute(
+                    text(
+                        "SELECT * FROM %(id)s ORDER BY RAND() LIMIT 10000",
+                        (table,)
+                    )
+                ).mappings()
+                #
+                # add table
+                self.add_table(
+                    table,
+                    data=pd.DataFrame(table_data),
+                    primary_key=inspector.get_pk_constraint(
+                        table, schema=schema
+                    )["constrained_columns"].pop()
+                    # add table only has hook for one pk column?
+                )
+                #
+                # update relations
+                for rel in inspector.get_foreign_keys(table, schema=schema):
+                    for fkey in rel["constrained_columns"]:
+                        self.add_relationship(rel["referred_table"], table, fkey)
