@@ -1034,6 +1034,15 @@ class Metadata:
     def reflect(self, schema):
         """Build metadata and corresponding dataset via reflection.
         
+        Convenience method that interacts with a RDBMS instance to populate the
+        instance. This method is particularly useful when filesystems are not
+        available, e.g. cloud-based runtimes supported only by RAM.
+
+        Args:
+            schema (str):
+                The name of the schema to model. If the value is unkown for some
+                reason, a typical default value for many RDBMS instances is
+                ``public``.
         """
         inspector = sqla_inspect(self.engine)
         if schema not in inspector.get_schema_names():
