@@ -1034,8 +1034,8 @@ class Metadata:
     def reflect(self, schema):
         """Build metadata and corresponding dataset via reflection.
         
-        Convenience method that interacts with a RDBMS instance to populate the
-        instance. This method is particularly useful when filesystems are not
+        Convenience method that interacts with a RDBMS server to populate the
+        instance. This method is particularly useful when a filesystem is not
         available, e.g. cloud-based runtimes supported only by RAM.
 
         Args:
@@ -1046,9 +1046,11 @@ class Metadata:
         """
         inspector = sqla_inspect(self.engine)
         if schema not in inspector.get_schema_names():
-            raise MetadataError("unable to locate metadata")
+            raise MetadataError("unable to reflect metadata")
         with self.engine.connect() as connection:
+            tables = list()
             for table, _ in inspector.get_sorted_table_and_fkc_names():
+                tables.append(table)
                 #
                 # fetch python-typed records
                 table_data = connection.execute(
@@ -1065,10 +1067,12 @@ class Metadata:
                     primary_key=inspector.get_pk_constraint(
                         table, schema=schema
                     )["constrained_columns"].pop()
-                    # add table only has hook for one pk column?
+                    # add table has hook for just one pk column?
                 )
-                #
-                # update relations
+            #
+            # update relations
+            while any(tables):
+                table = tables.pop()
                 for rel in inspector.get_foreign_keys(table, schema=schema):
                     for fkey in rel["constrained_columns"]:
                         self.add_relationship(rel["referred_table"], table, fkey)
